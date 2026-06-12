@@ -1,0 +1,11 @@
+/random/setSeeds 585169 179146 791995 952349 75982 38707 605258 382916 561154 629429 75276
+/run/numberOfThreads 10
+/detector/envSizeZ 23.0
+/run/initialize
+/analysis/setFileName CMS_ECal_HCal_p_2212_12_10evt_test
+/gun/position 0 0 -130 cm
+/gun/momentum 0 0 1
+/gun/particle proton
+/gun/energy 176.88966891446282 GeV
+/run/printProgress 1
+/run/beamOn 10
