@@ -98,37 +98,37 @@ with Geant4 11.2.2 from CVMFS. The successful final build command was:
 make -j4
 ```
 
-## Pythia/Rivet all-particle analysis
+## Pythia8/Rivet all-particle analysis
 
-The Pythia/Rivet files copied from
+The Pythia8/Rivet files copied from
 `/cms/ldap_home/taehee/CMSSW_14_0_18/src` are stored in:
 
 ```text
-Pythia/
+Pythia8/
 ```
 
 The key files are:
 
 ```text
-Pythia/allParticles.cc          custom Rivet analysis source
-Pythia/RivetallParticles.so     compiled Rivet plugin
-Pythia/pythia_test.py           small CMSSW/Rivet test config
-Pythia/pythia_softQCD_rivet.py  SoftQCD production config
-Pythia/pythia_hardQCD_rivet.py  HardQCD pTHat-bin production config
-Pythia/run_rivet_condor_job.sh  per-job Condor runner
-Pythia/submit_rivet_all.sh      Condor submission helper
+Pythia8/allParticles.cc          custom Rivet analysis source
+Pythia8/RivetallParticles.so     compiled Rivet plugin
+Pythia8/pythia_test.py           small CMSSW/Rivet test config
+Pythia8/pythia_softQCD_rivet.py  SoftQCD production config
+Pythia8/pythia_hardQCD_rivet.py  HardQCD pTHat-bin production config
+Pythia8/run_rivet_condor_job.sh  per-job Condor runner
+Pythia8/submit_rivet_all.sh      Condor submission helper
 ```
 
 The `allParticles` analysis loops over all particles in each event and fills
 ROOT `TH2D` histograms of particle energy versus polar angle. Its ROOT output
 file is `allParticles.root`.
 
-Load the CMSSW environment, then run from the copied Pythia directory:
+Load the CMSSW environment, then run from the copied Pythia8 directory:
 
 ```bash
 cd /cms/ldap_home/taehee/CMSSW_14_0_18/src
 cmsenv
-cd /cms/ldap_home/taehee/BkgStudy_CMSBeamDump/Pythia
+cd /cms/ldap_home/taehee/BkgStudy_CMSBeamDump/Pythia8
 export RIVET_ANALYSIS_PATH=$PWD
 ```
 
@@ -192,12 +192,12 @@ from the custom plugin, `allParticles.root`.
 Submit the SoftQCD and HardQCD Condor production jobs with:
 
 ```bash
-cd /cms/ldap_home/taehee/BkgStudy_CMSBeamDump/Pythia
+cd /cms/ldap_home/taehee/BkgStudy_CMSBeamDump/Pythia8
 ./submit_rivet_all.sh
 ```
 
-The helper writes generated Condor files under `Pythia/condor/` and output
-ROOT/YODA files under `Pythia/root/`.
+The helper writes generated Condor files under `Pythia8/condor/` and output
+ROOT/YODA files under `Pythia8/root/`.
 
 ## Condor production jobs
 
@@ -227,6 +227,9 @@ filenames are:
 ```text
 CMS_ECal_HCal_<particle>_<pdgid>_<Ebin>_1E5.mac
 ```
+
+The Condor `JobBatchName` is set to the same base name as the macro and ROOT
+output, for example `CMS_ECal_HCal_p_2212_12_1E5`.
 
 Generated files are separated under `Geant4_condor/`:
 

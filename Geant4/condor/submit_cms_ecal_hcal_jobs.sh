@@ -152,6 +152,7 @@ request_cpus = ${THREADS}
 request_memory = ${REQUEST_MEMORY_MB} MB
 getenv = True
 accounting_group = group_cms
++JobBatchName = "\$(name)"
 queue script,name from ${JOBS_LIST}
 EOF
 
