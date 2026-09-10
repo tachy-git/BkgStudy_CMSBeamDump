@@ -8,9 +8,9 @@ pthat_max="$4"
 seed="$5"
 events="$6"
 
-base_dir="/cms/ldap_home/taehee/BkgStudy_CMSBeamDump/Pythia"
+base_dir="/cms/ldap_home/taehee/BkgStudy_CMSBeamDump/Pythia8"
 cmssw_src="/cms/ldap_home/taehee/CMSSW_14_0_18/src"
-output_dir="${base_dir}/root"
+output_dir="${base_dir}/condor/root"
 output_base="${sample}_${seed}"
 work_dir="${_CONDOR_SCRATCH_DIR:-/tmp}/rivet_${sample}_${seed}_$$"
 

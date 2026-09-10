@@ -210,26 +210,69 @@ Geant4/condor/submit_cms_ecal_hcal_jobs.sh
 It generates jobs for these particles:
 
 ```text
-photon, nue, nueb, numu, numub, nutau, nutaub, pi0, pip, pim, eta,
-kp, km, p, pb, n, nb, e, ep, mup, mum
+photon, pip, pim, kp, km, p, pb, n, nb, e, ep, mup, mum
 ```
 
-The energy grid follows:
-
-```cpp
-for (double i = 1.0e-3; i < 5.0e3; i *= std::pow(10.0, 0.1))
-```
-
-with energies below `10 GeV` skipped. This leaves 27 energy bins. With 21
-particles, the script generates 567 jobs. Energy-bin labels start from `1`, so
-filenames are:
+The energy grid is built from log-spaced bin edges:
 
 ```text
-CMS_ECal_HCal_<particle>_<pdgid>_<Ebin>_1E5.mac
+low edge:  1e-3 GeV to 5e3 GeV
+log step:  0.1 in log10(E)
 ```
 
-The Condor `JobBatchName` is set to the same base name as the macro and ROOT
-output, for example `CMS_ECal_HCal_p_2212_12_1E5`.
+Bins whose low edge is below `10 GeV` are skipped, but the global bin index is
+kept. The generated bins are therefore indexed `41..67`. The energy-bin center
+is the geometric center of each kept total-energy log bin:
+
+```text
+Etotal_center = sqrt(E_low * E_high)
+```
+
+The first kept bin is index `41` with center `11.220184543019641 GeV`. The last
+kept bin is index `67` with center `4466.8359215096352 GeV`.
+
+The Geant4 `/gun/energy` command expects kinetic energy, not total energy. The
+macro generator therefore subtracts the beam-particle rest mass:
+
+```text
+Egun_kinetic = Etotal_center - m_particle
+```
+
+For photons this is unchanged because the mass is zero. For protons, bin `41`
+uses `11.220184543019641 - 0.93827208943 = 10.281912453589641 GeV`.
+
+By default the script generates 100 independent seed replicas per
+particle/energy sample and 1000 events per job. With 13 active particles, 27
+energy bins, and 100 replicas, the default production is 35100 Condor jobs.
+Filenames are:
+
+```text
+CMS_ECal_HCal_<particle>_<pdgid>_<Ebin>_1E3_<replica>.mac
+```
+
+The matching ROOT output basename uses the same pattern, so one
+particle/energy sample can be globbed across replicas, for example:
+
+```text
+CMS_ECal_HCal_photon_22_41_1E3_*.root
+```
+
+The script writes one Condor submit file per particle and energy bin. Each
+submit file queues all seed replicas for that particle/energy sample and sets
+`JobBatchName` to the same sample-level prefix as the ROOT files, for example
+`CMS_ECal_HCal_photon_22_41_1E3`. With the default 100 replicas, each
+`condor_submit` sends 100 jobs instead of sending all 2700 photon jobs at once.
+
+During real submission, the script throttles between submit files so the queue
+limit is not exceeded. These production constants are fixed in the script:
+
+```text
+ENV_SIZE_Z=23.0
+BEAM_Z_CM=-130
+MAX_MYJOBS=4900
+MAX_ALLJOBS=19000
+QUEUE_SLEEP_SECONDS=360
+```
 
 Generated files are separated under `Geant4_condor/`:
 
@@ -237,7 +280,7 @@ Generated files are separated under `Geant4_condor/`:
 Geant4_condor/mac/     generated macro files
 Geant4_condor/sh/      generated per-job shell scripts
 Geant4_condor/root/    ROOT output target directory
-Geant4_condor/log/     Condor stdout/stderr/log files
+Geant4_condor/log/     per-job stdout/stderr files and shared Condor event log
 Geant4_condor/submit/  Condor submit file and job list
 ```
 
@@ -249,6 +292,13 @@ Submit the jobs:
 cd /cms/ldap_home/taehee/BkgStudy_CMSBeamDump
 cd Geant4/condor
 ./submit_cms_ecal_hcal_jobs.sh
+```
+
+Submit only one particle species:
+
+```bash
+./submit_cms_ecal_hcal_jobs.sh --particle photon
+./submit_cms_ecal_hcal_jobs.sh --particle 2212
 ```
 
 Generate the Condor files without submitting:
@@ -273,10 +323,13 @@ and runs the local executable:
 Useful overrides:
 
 ```bash
-THREADS=4 EVENTS=100000 REQUEST_MEMORY_MB=8192 WORK_DIR=/path/to/workdir ./submit_cms_ecal_hcal_jobs.sh
+THREADS=4 EVENTS=100000 REPLICAS=20 REQUEST_MEMORY_MB=8192 WORK_DIR=/path/to/workdir ./submit_cms_ecal_hcal_jobs.sh
+./submit_cms_ecal_hcal_jobs.sh --replicas 5 --particle photon --dryrun
 EXE=/path/to/exampleB1 ./submit_cms_ecal_hcal_jobs.sh --dryrun
 ```
 
 If Condor holds jobs with a message like `Job has gone over cgroup memory
-limit`, increase `REQUEST_MEMORY_MB` and resubmit. The default request is
-`6144 MB`.
+limit`, either reduce `THREADS` or increase `REQUEST_MEMORY_MB` and resubmit.
+The default is `THREADS=2` and `REQUEST_MEMORY_MB=12288`, a compromise between
+the stable one-thread memory footprint and the higher memory use seen with
+eight-thread Geant4 jobs.

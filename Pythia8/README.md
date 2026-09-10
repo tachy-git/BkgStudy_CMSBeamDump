@@ -137,6 +137,11 @@ The default scale factor applied to each stored histogram bin content is:
 2.0e6
 ```
 
+This factor is used because only the angular region up to 90 degrees is stored.
+The particle distribution is treated as symmetric in eta, so the selected
+half-range is multiplied by 2 to account for the opposite side. The remaining
+factor of `1e6` converts the normalization from `pb^-1` to `ab^-1`.
+
 ## `CalW.pkl` Structure
 
 `CalW.pkl` is a Python pickle containing a dictionary:
@@ -166,7 +171,9 @@ The fields mean:
   logarithmic energy axis.
 - `angle_index`: compact output angle index. The stored range is 1 to 84,
   corresponding to ROOT Y-axis bins covering `6 <= theta < 90` degrees.
-- value: the weighted histogram bin content multiplied by the scale factor.
+- value: the weighted histogram bin content multiplied by the `2.0e6` scale
+  factor, where `2.0e6 = 2 * 1e6` accounts for eta symmetry and converts the
+  normalization from `pb^-1` to `ab^-1`.
 
 The configured particle labels are:
 
@@ -190,3 +197,24 @@ print(type(calw))
 print(len(calw))
 print(next(iter(calw.items())))
 ```
+
+## Plotting `CalW.pkl`
+
+`plot_CalW_pkl.py` provides a quick visual check of the pickle contents:
+
+```bash
+./plot_CalW_pkl.py
+```
+
+The script loads `CalW.pkl`, rebuilds the same logarithmic energy binning used
+in `allParticles.cc`, and creates one energy histogram per particle. For each
+particle, it sums the stored `CalW.pkl` weights over all angle bins at each
+energy bin.
+
+The script writes PNG files only:
+
+```text
+plots/hist_<particle>.png
+```
+
+No ROOT file is produced by this plotting script.
