@@ -53,6 +53,7 @@ namespace Rivet {
       bookParticle(-11, "ep", nx, eAxis.data(), ny, thetaAxis.data());
       bookParticle(-13, "mup", nx, eAxis.data(), ny, thetaAxis.data());
       bookParticle(13, "mum", nx, eAxis.data(), ny, thetaAxis.data());
+      bookParticle(2114, "lambda", nx, eAxis.data(), ny, thetaAxis.data());
     }
 
     void analyze(const Event& event) override {

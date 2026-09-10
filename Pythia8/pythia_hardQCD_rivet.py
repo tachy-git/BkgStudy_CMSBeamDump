@@ -52,7 +52,6 @@ processParameters = cms.vstring(
     'Next:numberShowInfo = 0',
     'Next:numberShowProcess = 0',
     'Next:numberShowEvent = 0',
-    'SoftQCD:all = off',
     'HardQCD:all = on',
     'PhaseSpace:pTHatMin = %i' % options.pTHatMin,
 )

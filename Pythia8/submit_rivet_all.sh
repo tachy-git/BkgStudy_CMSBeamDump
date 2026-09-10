@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-base_dir="/cms/ldap_home/taehee/BkgStudy_CMSBeamDump/Pythia"
+base_dir="/cms/ldap_home/taehee/BkgStudy_CMSBeamDump/Pythia8"
 submit_file="${base_dir}/condor/submit_rivet_all.generated.sub"
 events=10000
 
-mkdir -p "${base_dir}/condor/logs" "${base_dir}/root"
+mkdir -p "${base_dir}/condor/logs" "${base_dir}/condor/root"
 
 cat > "${submit_file}" <<EOT
 universe = vanilla
 executable = ${base_dir}/run_rivet_condor_job.sh
 accounting_group = group_cms
 getenv = True
+request_memory = 8 GB
 
 log = ${base_dir}/condor/logs/rivet_all.log
 EOT
@@ -32,11 +33,8 @@ queue
 EOT
 }
 
-for seed in $(seq 42 141); do
-  add_job "SoftQCD" "pythia_softQCD_rivet.py" "-1" "-1" "${seed}"
-done
-
 pthat_bins=(
+  "5 15"
   "15 20"
   "20 30"
   "30 50"
@@ -63,11 +61,10 @@ for bin in "${pthat_bins[@]}"; do
     sample="HardQCD_Bin-PT-${pthat_min}to${pthat_max}"
   fi
 
-  for seed in $(seq 42 141); do
+  for seed in $(seq 42 241); do
     add_job "${sample}" "pythia_hardQCD_rivet.py" "${pthat_min}" "${pthat_max}" "${seed}"
   done
 done
 
 echo "Wrote ${submit_file}"
-echo "Submitting 1700 jobs: 100 SoftQCD jobs and 1600 HardQCD pTHat-bin jobs."
 condor_submit "${submit_file}"
