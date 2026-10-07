@@ -1,5 +1,10 @@
 # Pythia8 HardQCD CalW Production
 
+**Current production:** the plugin writes three jet constituent selections
+(pT > 30, 50, 100 GeV). Use the commands in "Jet constituent CalW production"
+below with a new `condor_jetcuts` directory. The earlier workflow describes
+the legacy inclusive output and must not be used to mix old and new jobs.
+
 This directory produces `CalW.pkl` from binned Pythia8 proton-proton
 collision samples at 13.6 TeV. The samples are generated in `pTHat` bins, the
 particle energy and polar angle distributions are stored as ROOT histograms,
@@ -218,3 +223,52 @@ plots/hist_<particle>.png
 ```
 
 No ROOT file is produced by this plotting script.
+
+
+## Jet constituent CalW production (30, 50, 100 GeV)
+
+The plugin now builds anti-kT R=0.4 jets from `FinalState()`, using the same
+FastJets defaults as the previous jetConstituents analysis. It keeps jets with
+|rapidity| <= 3 and fills constituents separately for strict jet pT > 30,
+> 50, and > 100 GeV. These are cumulative selections on the same events,
+not additional constituent pT or eta cuts. Each job ROOT contains directories
+`jetpt30`, `jetpt50`, and `jetpt100`, with the original particle histogram names
+and original new energy and polar-angle axes. Decayed intermediates are no
+longer counted. A jet threshold is not a pTHat threshold.
+
+Build in CMSSW_14_0_18, then submit to a separate production directory:
+
+```bash
+source /cvmfs/cms.cern.ch/cmsset_default.sh
+cd /cms/ldap_home/taehee/CMSSW_14_0_18/src
+cmsenv
+cd /cms/ldap_home/taehee/BkgStudy_CMSBeamDump/Pythia8
+rivet-build RivetallParticles.so allParticles.cc $(root-config --cflags --libs)
+bash submit_rivet_all.sh --output-dir condor_jetcuts
+```
+
+After all jobs finish successfully:
+
+```bash
+python3 make_rivet_xsec_table.py --log-dir condor_jetcuts/logs --output condor_jetcuts/rivet_xsec_table.txt
+python3 merge_rivet_weighted.py --table condor_jetcuts/rivet_xsec_table.txt --root-dir condor_jetcuts/root --hard-output condor_jetcuts/allParticles_hardQCD_weighted.root
+python3 make_CalW_pkl.py --input condor_jetcuts/allParticles_hardQCD_weighted.root --jet-cuts --output condor_jetcuts
+```
+
+The three final files are `condor_jetcuts/CalW_jetpt30.pkl`,
+`condor_jetcuts/CalW_jetpt50.pkl`, and `condor_jetcuts/CalW_jetpt100.pkl`.
+The converter verifies equal key sets and W30 >= W50 >= W100 >= 0 for every
+stored bin before writing. Select one with the dimuon analysis `--weights`:
+
+```bash
+python3 260907_TH.py --weights /cms/ldap_home/taehee/BkgStudy_CMSBeamDump/Pythia8/condor_jetcuts/CalW_jetpt30.pkl
+```
+
+All three use sigma / **all generated events** per pTHat process. Never divide
+by jet-selected events or multiply by selection efficiency again. The
+2 * 10^6 CalW scale (1 ab^-1 and eta symmetry), 13.6 TeV configuration,
+17 pTHat bins, and compact angle index mapping remain the same.
+Existing flat-histogram ROOT files can still be converted without `--jet-cuts`.
+They cannot be used to reconstruct jet-selected flux; new generation is required.
+The older Overview describes the original inclusive format; use this section
+for the updated jet production. The existing CalW.pkl is not overwritten.

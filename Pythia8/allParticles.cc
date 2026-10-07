@@ -1,4 +1,6 @@
 #include "Rivet/Analysis.hh"
+#include "Rivet/Projections/FinalState.hh"
+#include "Rivet/Projections/FastJets.hh"
 
 #include "TFile.h"
 #include "TH2D.h"
@@ -17,6 +19,7 @@ namespace Rivet {
     { }
 
     void init() override {
+      declare(FastJets(FinalState(), FastJets::ANTIKT, 0.4), "jets");
       rootOut = new TFile("allParticles.root", "RECREATE");
 
       std::vector<double> eAxis;
@@ -57,22 +60,31 @@ namespace Rivet {
     }
 
     void analyze(const Event& event) override {
-      for (const Particle& particle : event.allParticles()) {
-        const auto hist = hparticle.find(particle.pid());
-        if (hist == hparticle.end()) {
-          continue;
-        }
+      const Jets jets = apply<FastJets>(event, "jets").jetsByPt(Cuts::pT > 30.0*GeV);
+      for (const Jet& jet : jets) {
+        if (jet.absrapidity() > 3.0) continue;
+        for (const Particle& particle : jet.constituents()) {
+          const auto hist = hparticle.find(particle.pid());
+          if (hist == hparticle.end()) {
+            continue;
+          }
 
-        const FourMomentum& momentum = particle.momentum();
-        hist->second->Fill(particle.E(), momentum.theta() * 180.0 / M_PI);
+          const FourMomentum& momentum = particle.momentum();
+          for (const auto& selection : hist->second) {
+            if (jet.pT() > selection.first * GeV)
+              selection.second->Fill(particle.E()/GeV, momentum.theta() * 180.0 / M_PI);
+          }
+        }
       }
     }
 
     void finalize() override {
-      rootOut->cd();
       for (const auto& particleHist : hparticle) {
-        particleHist.second->Write();
-        delete particleHist.second;
+        for (const auto& selection : particleHist.second) {
+          rootOut->GetDirectory(("jetpt" + std::to_string(selection.first)).c_str())->cd();
+          selection.second->Write();
+          delete selection.second;
+        }
       }
       hparticle.clear();
 
@@ -84,11 +96,18 @@ namespace Rivet {
 
   private:
     void bookParticle(int pid, const std::string& name, int nx, const double* xbins, int ny, const double* ybins) {
-      hparticle[pid] = new TH2D(name.c_str(), name.c_str(), nx, xbins, ny, ybins);
+      for (int cut : {30, 50, 100}) {
+        const std::string directory = "jetpt" + std::to_string(cut);
+        if (!rootOut->GetDirectory(directory.c_str())) rootOut->mkdir(directory.c_str());
+        rootOut->GetDirectory(directory.c_str())->cd();
+        auto* hist = new TH2D(name.c_str(), name.c_str(), nx, xbins, ny, ybins);
+        hist->SetDirectory(nullptr);
+        hparticle[pid][cut] = hist;
+      }
     }
 
     TFile* rootOut = nullptr;
-    std::map<int, TH2D*> hparticle;
+    std::map<int, std::map<int, TH2D*>> hparticle;
   };
 
   DECLARE_RIVET_PLUGIN(allParticles);

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import argparse
+import math
 import pickle
+from pathlib import Path
 
 import ROOT
 
@@ -63,6 +65,7 @@ def parse_args():
         default=WEIGHT_SCALE,
         help="Scale factor applied to each stored histogram bin content",
     )
+    parser.add_argument("--jet-cuts", action="store_true", help="Write CalW_jetpt{30,50,100}.pkl from jet-cut directories; --output sets the output directory")
     return parser.parse_args()
 
 
@@ -142,19 +145,33 @@ def main():
     args = parse_args()
     root_file = open_root(args.input)
     try:
-        histograms = get_histograms(root_file)
-        calw = build_calw(histograms, args.scale)
+        if args.jet_cuts:
+            output_dir = Path(".") if args.output == OUTPUT_PKL else Path(args.output)
+            results = {}
+            for cut in (30, 50, 100):
+                directory = root_file.GetDirectory(f"jetpt{cut}")
+                if not directory:
+                    raise ValueError(f"Missing jetpt{cut} directory")
+                results[cut] = build_calw(get_histograms(directory), args.scale)
+            if any(results[30].keys() != results[c].keys() for c in (50, 100)):
+                raise ValueError("Jet-cut CalW keys differ")
+            for key in results[30]:
+                a, b, c = (results[cut][key] for cut in (30, 50, 100))
+                if not (all(math.isfinite(v) for v in (a, b, c)) and a >= b >= c >= 0):
+                    raise ValueError(f"Non-nested or invalid weights: {key}: {a}, {b}, {c}")
+            output_dir.mkdir(parents=True, exist_ok=True)
+            for cut, calw in results.items():
+                path = output_dir / f"CalW_jetpt{cut}.pkl"
+                with path.open("wb") as handle:
+                    pickle.dump(calw, handle)
+                print(f"Wrote {len(calw)} weights to {path}")
+        else:
+            calw = build_calw(get_histograms(root_file), args.scale)
+            with open(args.output, "wb") as handle:
+                pickle.dump(calw, handle)
+            print(f"Wrote {len(calw)} weights to {args.output}")
     finally:
         root_file.Close()
-
-    with open(args.output, "wb") as output_file:
-        pickle.dump(calw, output_file)
-
-    print(
-        "Wrote {} weights from {} histograms to {}".format(
-            len(calw), len(histograms), args.output
-        )
-    )
 
 
 if __name__ == "__main__":

@@ -10,7 +10,8 @@ events="$6"
 
 base_dir="/cms/ldap_home/taehee/BkgStudy_CMSBeamDump/Pythia8"
 cmssw_src="/cms/ldap_home/taehee/CMSSW_14_0_18/src"
-output_dir="${base_dir}/condor/root"
+production_dir="${7:-${base_dir}/condor}"
+output_dir="${production_dir}/root"
 output_base="${sample}_${seed}"
 work_dir="${_CONDOR_SCRATCH_DIR:-/tmp}/rivet_${sample}_${seed}_$$"
 

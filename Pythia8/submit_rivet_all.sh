@@ -2,10 +2,18 @@
 set -euo pipefail
 
 base_dir="/cms/ldap_home/taehee/BkgStudy_CMSBeamDump/Pythia8"
-submit_file="${base_dir}/condor/submit_rivet_all.generated.sub"
+production_dir="${base_dir}/condor"
+if [[ "${1:-}" == "--output-dir" && $# == 2 ]]; then
+  production_dir="$2"
+  [[ "$production_dir" = /* ]] || production_dir="${PWD}/${production_dir}"
+elif [[ $# != 0 ]]; then
+  echo "Usage: $0 [--output-dir DIRECTORY]" >&2
+  exit 2
+fi
+submit_file="${production_dir}/submit_rivet_all.generated.sub"
 events=10000
 
-mkdir -p "${base_dir}/condor/logs" "${base_dir}/condor/root"
+mkdir -p "${production_dir}/logs" "${production_dir}/root"
 
 cat > "${submit_file}" <<EOT
 universe = vanilla
@@ -14,7 +22,7 @@ accounting_group = group_cms
 getenv = True
 request_memory = 8 GB
 
-log = ${base_dir}/condor/logs/rivet_all.log
+log = ${production_dir}/logs/rivet_all.log
 EOT
 
 add_job() {
@@ -25,9 +33,9 @@ add_job() {
   local seed="$5"
 
   cat >> "${submit_file}" <<EOT
-arguments = ${sample} ${config} ${pthat_min} ${pthat_max} ${seed} ${events}
-output = ${base_dir}/condor/logs/${sample}_${seed}.out
-error = ${base_dir}/condor/logs/${sample}_${seed}.err
+arguments = ${sample} ${config} ${pthat_min} ${pthat_max} ${seed} ${events} ${production_dir}
+output = ${production_dir}/logs/${sample}_${seed}.out
+error = ${production_dir}/logs/${sample}_${seed}.err
 queue
 
 EOT

@@ -55,22 +55,31 @@ def open_root(path):
 
 def add_process_histograms(process, files, scale):
     summed = {}
+    expected_keys = None
     for path in files:
+        file_keys = set()
         root_file = open_root(path)
         try:
-            for key in root_file.GetListOfKeys():
-                obj = key.ReadObj()
-                if not obj.InheritsFrom("TH1"):
-                    continue
-
-                name = obj.GetName()
-                if name not in summed:
-                    hist = obj.Clone(name)
-                    hist.SetDirectory(0)
-                    hist.Reset("ICES")
-                    summed[name] = hist
-
-                summed[name].Add(obj)
+            def collect(directory, prefix=""):
+                for key in directory.GetListOfKeys():
+                    obj = key.ReadObj()
+                    if obj.InheritsFrom("TDirectory"):
+                        collect(obj, prefix + obj.GetName() + "/")
+                    elif obj.InheritsFrom("TH1"):
+                        name = prefix + obj.GetName()
+                        file_keys.add(name)
+                        if name not in summed:
+                            hist = obj.Clone(obj.GetName())
+                            hist.SetDirectory(0)
+                            hist.Reset("ICES")
+                            summed[name] = hist
+                        if not summed[name].Add(obj):
+                            raise ValueError(f"Incompatible histogram axes: {path}: {name}")
+            collect(root_file)
+            if expected_keys is None:
+                expected_keys = file_keys
+            elif file_keys != expected_keys:
+                raise ValueError(f"Histogram schema mismatch: {path}")
         finally:
             root_file.Close()
 
@@ -83,6 +92,8 @@ def add_process_histograms(process, files, scale):
 
 
 def merge_into(target, source):
+    if target and target.keys() != source.keys():
+        raise ValueError("Histogram schema mismatch between pTHat processes")
     for name, hist in source.items():
         if name not in target:
             clone = hist.Clone(name)
@@ -100,7 +111,12 @@ def write_output(path, histograms):
     try:
         output.cd()
         for name in sorted(histograms):
-            histograms[name].Write()
+            components = name.split("/")
+            directory = output
+            for component in components[:-1]:
+                directory = directory.GetDirectory(component) or directory.mkdir(component)
+            directory.cd()
+            histograms[name].Write(components[-1])
         output.Write()
     finally:
         output.Close()
