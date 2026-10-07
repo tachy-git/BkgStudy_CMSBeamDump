@@ -46,7 +46,7 @@ PDGID = {
 def parse_args():
     parser = argparse.ArgumentParser(
         description=(
-            "Create CalW.pkl from the pre-weighted allParticles ROOT histograms."
+            "Create jet-cut CalW pickle files from pre-weighted allParticles ROOT histograms."
         )
     )
     parser.add_argument(
@@ -57,7 +57,10 @@ def parse_args():
     parser.add_argument(
         "--output",
         default=OUTPUT_PKL,
-        help="Output pickle file for the CalW weight dictionary",
+        help=(
+            "Output directory for jet-cut CalW files. With --inclusive, this is "
+            "the output pickle file."
+        ),
     )
     parser.add_argument(
         "--scale",
@@ -65,7 +68,11 @@ def parse_args():
         default=WEIGHT_SCALE,
         help="Scale factor applied to each stored histogram bin content",
     )
-    parser.add_argument("--jet-cuts", action="store_true", help="Write CalW_jetpt{30,50,100}.pkl from jet-cut directories; --output sets the output directory")
+    parser.add_argument(
+        "--inclusive",
+        action="store_true",
+        help="Write one inclusive CalW.pkl from flat TH2 histograms instead of jet-cut directories",
+    )
     return parser.parse_args()
 
 
@@ -83,10 +90,10 @@ def get_histograms(root_file):
         if not obj.InheritsFrom("TH2"):
             continue
 
-        name = obj.GetName()
+        name = key.GetName()
         if name not in PDGID:
             raise KeyError(
-                "No PDG ID is configured for histogram '{}'".format(name)
+                "No PDG ID is configured for histogram '{}'".format(obj.GetName())
             )
         histograms[name] = obj
 
@@ -145,7 +152,12 @@ def main():
     args = parse_args()
     root_file = open_root(args.input)
     try:
-        if args.jet_cuts:
+        if args.inclusive:
+            calw = build_calw(get_histograms(root_file), args.scale)
+            with open(args.output, "wb") as handle:
+                pickle.dump(calw, handle)
+            print(f"Wrote {len(calw)} weights to {args.output}")
+        else:
             output_dir = Path(".") if args.output == OUTPUT_PKL else Path(args.output)
             results = {}
             for cut in (30, 50, 100):
@@ -165,11 +177,6 @@ def main():
                 with path.open("wb") as handle:
                     pickle.dump(calw, handle)
                 print(f"Wrote {len(calw)} weights to {path}")
-        else:
-            calw = build_calw(get_histograms(root_file), args.scale)
-            with open(args.output, "wb") as handle:
-                pickle.dump(calw, handle)
-            print(f"Wrote {len(calw)} weights to {args.output}")
     finally:
         root_file.Close()
 

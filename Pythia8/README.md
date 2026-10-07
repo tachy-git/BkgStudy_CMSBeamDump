@@ -211,15 +211,26 @@ print(next(iter(calw.items())))
 ./plot_CalW_pkl.py
 ```
 
-The script loads `CalW.pkl`, rebuilds the same logarithmic energy binning used
-in `allParticles.cc`, and creates one energy histogram per particle. For each
-particle, it sums the stored `CalW.pkl` weights over all angle bins at each
-energy bin.
+For jet-cut outputs, pass all pickle files together:
 
-The script writes PNG files only:
+```bash
+./plot_CalW_pkl.py --input \
+  condor_jetcuts/CalW_jetpt30.pkl \
+  condor_jetcuts/CalW_jetpt50.pkl \
+  condor_jetcuts/CalW_jetpt100.pkl
+```
+
+The script loads each pickle, rebuilds the same logarithmic energy binning used
+in `allParticles.cc`, and creates one energy histogram per particle. For each
+particle, it sums the stored weights over all angle bins at each energy bin.
+
+The script writes PNG files only, grouped by input pickle name:
 
 ```text
-plots/hist_<particle>.png
+plots/CalW/hist_<particle>.png
+plots/CalW_jetpt30/hist_<particle>.png
+plots/CalW_jetpt50/hist_<particle>.png
+plots/CalW_jetpt100/hist_<particle>.png
 ```
 
 No ROOT file is produced by this plotting script.
@@ -252,7 +263,7 @@ After all jobs finish successfully:
 ```bash
 python3 make_rivet_xsec_table.py --log-dir condor_jetcuts/logs --output condor_jetcuts/rivet_xsec_table.txt
 python3 merge_rivet_weighted.py --table condor_jetcuts/rivet_xsec_table.txt --root-dir condor_jetcuts/root --hard-output condor_jetcuts/allParticles_hardQCD_weighted.root
-python3 make_CalW_pkl.py --input condor_jetcuts/allParticles_hardQCD_weighted.root --jet-cuts --output condor_jetcuts
+python3 make_CalW_pkl.py --input condor_jetcuts/allParticles_hardQCD_weighted.root --output condor_jetcuts
 ```
 
 The three final files are `condor_jetcuts/CalW_jetpt30.pkl`,
@@ -268,7 +279,7 @@ All three use sigma / **all generated events** per pTHat process. Never divide
 by jet-selected events or multiply by selection efficiency again. The
 2 * 10^6 CalW scale (1 ab^-1 and eta symmetry), 13.6 TeV configuration,
 17 pTHat bins, and compact angle index mapping remain the same.
-Existing flat-histogram ROOT files can still be converted without `--jet-cuts`.
+Existing flat-histogram ROOT files can still be converted with `--inclusive`.
 They cannot be used to reconstruct jet-selected flux; new generation is required.
 The older Overview describes the original inclusive format; use this section
 for the updated jet production. The existing CalW.pkl is not overwritten.

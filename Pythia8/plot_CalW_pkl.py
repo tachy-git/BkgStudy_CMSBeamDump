@@ -96,29 +96,40 @@ def save_outputs(histograms, output_dir, edges):
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Draw per-particle energy histogram PNGs from CalW.pkl."
+        description="Draw per-particle energy histogram PNGs from CalW pickle files."
     )
-    parser.add_argument("--input", default="CalW.pkl", help="Input pickle file.")
     parser.add_argument(
-        "--output-dir", default="plots", help="Directory for PNG histogram files."
+        "--input",
+        nargs="+",
+        default=["CalW.pkl"],
+        help="Input pickle file(s). Each file gets its own output subdirectory.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default="plots",
+        help="Base directory for PNG histogram files.",
     )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
-    input_path = Path(args.input)
-    output_dir = Path(args.output_dir)
-
-    data = load_calw(input_path)
+    output_base = Path(args.output_dir)
     edges = build_energy_edges()
-    histograms, skipped = make_histograms(data, edges)
-    save_outputs(histograms, output_dir, edges)
 
-    print(f"Loaded entries: {len(data)}")
-    print(f"Created particle histograms: {len(histograms)}")
-    print(f"Skipped entries: {skipped}")
-    print(f"PNG output directory: {output_dir}")
+    for input_name in args.input:
+        input_path = Path(input_name)
+        output_dir = output_base / safe_name(input_path.stem)
+
+        data = load_calw(input_path)
+        histograms, skipped = make_histograms(data, edges)
+        save_outputs(histograms, output_dir, edges)
+
+        print(f"Input pickle: {input_path}")
+        print(f"Loaded entries: {len(data)}")
+        print(f"Created particle histograms: {len(histograms)}")
+        print(f"Skipped entries: {skipped}")
+        print(f"PNG output directory: {output_dir}")
 
 
 if __name__ == "__main__":
