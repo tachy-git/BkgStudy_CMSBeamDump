@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""No-tilt dimuon histograms with cumulative energy, pT, DeltaR, eta selection."""
 import argparse
 import math
 import os
@@ -19,16 +20,14 @@ IE_MIN = 41
 IE_MAX = 66
 ENERGY_MIN = 10.0
 Z_MAX_CM = 20.0
-THETA_DIMUON_MAX = None
 MUON_PT_MIN = 10.0
 MUON_ABS_ETA_MAX = 2.4
-D0_MIN = 0.01
-RADIAL_ANGLE_MAX = 0.17
 N_DECAYS = 10000
 DEFAULT_SEED = 42
 RNG = np.random.default_rng(DEFAULT_SEED)
 WORKER_WEIGHTS = None
-OUTPUT_DIR = Path("condor/root_no_tilt")
+OUTPUT_DIR = Path("condor/dimuon")
+DIMUON_DR_MIN = 0.02
 
 MUON_MASS = 0.1056583755
 PI0_MASS = 0.1349768
@@ -110,15 +109,23 @@ HIST_1D_SPECS = {
     "pt": ("muon pT [GeV]", 200, 0.0, 200.0),
     "meson_energy": ("meson energy before decay [GeV]", 200, 0.0, 200.0),
     "abs_eta": ("muon |eta|", 60, 0.0, 3.0),
-    "abs_d0": ("muon |D0| [m]", 500, 0.0, 0.5),
-    "phi": ("muon #phi_{radial}^{xy} [rad]", 100, 0.0, np.pi),
     "dimuon_dr": ("#DeltaR(#mu,#mu)", 100, 0.0, 1.0),
-    "radial_angle": ("angle(#mu#mu, radial) [rad]", 300, 0.0, 0.3),
     "dimuon_mass_fine": ("m_{#mu#mu} [GeV]", 300, 0.0, 3.0),
 }
 
-MASS_NAMES = ("dimuon_mass_fine_after_pTd0_cut", "dimuon_mass_fine_after_all_cuts")
-CUTFLOW_STAGES = ("before_cuts", "pt", "pt_eta", "pt_eta_d0")
+# All arrays include ROOT underflow and overflow bins.
+HISTOGRAMS = (
+    ("meson_energy_before_cut", "meson_energy", "meson energy before energy cut"),
+    ("meson_energy_after_cut", "meson_energy", "meson energy after energy cut"),
+    ("pt", "pt", "muon pT before muon cuts"),
+    ("abs_eta", "abs_eta", "muon |eta| before muon cuts"),
+    ("dimuon_dr", "dimuon_dr", "dimuon DeltaR before muon cuts"),
+    ("dimuon_dr_after_pT_cut", "dimuon_dr", "dimuon DeltaR after pT cut only"),
+    ("dimuon_mass_fine_before_cuts", "dimuon_mass_fine", "mass before muon cuts"),
+    ("dimuon_mass_fine_after_pT_cut", "dimuon_mass_fine", "mass after pT cut only"),
+    ("dimuon_mass_fine_after_all_cuts", "dimuon_mass_fine", "mass after pT DeltaR eta cuts"),
+)
+CUTFLOW_STAGES = ("before_energy_cut", "energy", "energy_pt", "energy_pt_dr", "energy_pt_dr_eta")
 
 
 def log(message):
@@ -190,7 +197,7 @@ def sample_breit_wigner(mass, width, n, min_mass):
     out = []
     while sum(len(x) for x in out) < n:
         cand = mass + 0.5 * width * RNG.standard_cauchy(n)
-        keep = (cand > min_mass) & (cand < 2.0)
+        keep = cand > min_mass
         out.append(cand[keep])
     return np.concatenate(out)[:n]
 
@@ -216,43 +223,10 @@ def delta_phi(phi1, phi2):
     return (phi1 - phi2 + np.pi) % (2.0 * np.pi) - np.pi
 
 
-def d0_xy(radius, momentum):
-    direction = momentum / np.linalg.norm(momentum, axis=1)[:, None]
-    ux = direction[:, 0]
-    uy = direction[:, 1]
-    return np.abs(radius * uy) / np.sqrt(ux * ux + uy * uy)
-
-
-def radial_xy_unit(incident_angle_rad):
-    radial_xy = np.array([math.sin(incident_angle_rad), 0.0])
-    norm = np.linalg.norm(radial_xy)
-    if norm == 0.0:
-        raise ValueError("radial xy direction is undefined for incident angle 0")
-    return radial_xy / norm
-
-
-def radial_relative_phi_xy(momentum, incident_angle_rad):
-    radial_xy = radial_xy_unit(incident_angle_rad)
-    muon_xy = momentum[:, :2]
-    muon_pt = np.linalg.norm(muon_xy, axis=1)
-    cosine = np.sum(muon_xy * radial_xy, axis=1) / muon_pt
-    return np.arccos(np.clip(cosine, -1.0, 1.0))
-
-
 def invariant_mass(p1, e1, p2, e2):
     total_p = p1 + p2
     mass2 = (e1 + e2) ** 2 - np.sum(total_p * total_p, axis=1)
     return np.sqrt(np.maximum(mass2, 0.0))
-
-
-def dimuon_radial_angle(momentum, incident_angle_rad):
-    """3D angle to the untilted CalW radial direction, in radians."""
-    if np.any(~np.isfinite(momentum)) or np.any(np.linalg.norm(momentum, axis=1) == 0.0):
-        raise ValueError("dimuon radial angle requires finite, nonzero momentum")
-    radial = np.array([math.sin(incident_angle_rad), 0.0, math.cos(incident_angle_rad)])
-    cross = np.linalg.norm(np.cross(momentum, radial), axis=1)
-    dot = np.sum(momentum * radial, axis=1)
-    return np.arctan2(cross, dot)
 
 
 def build_decay_sample(p1, e1, p2, e2, radius, incident_angle_rad):
@@ -262,40 +236,21 @@ def build_decay_sample(p1, e1, p2, e2, radius, incident_angle_rad):
     eta2 = pseudorapidity(p2)
     abs_eta1 = np.abs(eta1)
     abs_eta2 = np.abs(eta2)
-    d01 = d0_xy(radius, p1)
-    d02 = d0_xy(radius, p2)
-    phi1 = radial_relative_phi_xy(p1, incident_angle_rad)
-    phi2 = radial_relative_phi_xy(p2, incident_angle_rad)
-    dimuon_p = p1 + p2
-    radial_angle = dimuon_radial_angle(dimuon_p, incident_angle_rad)
     mass = invariant_mass(p1, e1, p2, e2)
     dr = np.sqrt((eta1 - eta2) ** 2 + delta_phi(azimuth(p1), azimuth(p2)) ** 2)
     pt_mask = (pt1 > MUON_PT_MIN) & (pt2 > MUON_PT_MIN)
     eta_mask = (abs_eta1 < MUON_ABS_ETA_MAX) & (abs_eta2 < MUON_ABS_ETA_MAX)
-    d0_mask = (d01 > D0_MIN) & (d02 > D0_MIN)
-    masks = {
-        "pt": pt_mask,
-        "eta": eta_mask,
-        "d0": d0_mask,
-        "all": pt_mask & eta_mask & d0_mask,
-        "radial": radial_angle < RADIAL_ANGLE_MAX,
-    }
+    masks = {"pt": pt_mask, "eta": eta_mask}
 
     observables = {
         "pt1": pt1,
         "pt2": pt2,
         "abs_eta1": abs_eta1,
         "abs_eta2": abs_eta2,
-        "abs_d01": d01,
-        "abs_d02": d02,
-        "phi1": phi1,
-        "phi2": phi2,
         "pt_min": np.minimum(pt1, pt2),
         "abs_eta_max": np.maximum(abs_eta1, abs_eta2),
-        "abs_d0_min": np.minimum(d01, d02),
         "dimuon_mass": mass,
         "dimuon_dr": dr,
-        "dimuon_radial_angle": radial_angle,
     }
     return {"observables": observables, "masks": masks, "n_valid": len(mass)}
 
@@ -303,22 +258,16 @@ def build_decay_sample(p1, e1, p2, e2, radius, incident_angle_rad):
 def empty_decay_sample():
     empty_bool = np.zeros(0, dtype=bool)
     empty_float = np.zeros(0, dtype=float)
-    masks = {"pt": empty_bool, "eta": empty_bool, "d0": empty_bool, "all": empty_bool, "radial": empty_bool}
+    masks = {"pt": empty_bool, "eta": empty_bool}
     observables = {
         "pt1": empty_float,
         "pt2": empty_float,
         "abs_eta1": empty_float,
         "abs_eta2": empty_float,
-        "abs_d01": empty_float,
-        "abs_d02": empty_float,
-        "phi1": empty_float,
-        "phi2": empty_float,
         "pt_min": empty_float,
         "abs_eta_max": empty_float,
-        "abs_d0_min": empty_float,
         "dimuon_mass": empty_float,
         "dimuon_dr": empty_float,
-        "dimuon_radial_angle": empty_float,
     }
     return {"observables": observables, "masks": masks, "n_valid": 0}
 
@@ -451,20 +400,8 @@ def three_body_sample(mode, parent_energy, incident_angle_rad, radius):
 
 
 def make_1d_arrays():
-    return {
-        "meson_energy_before_decay": np.zeros(HIST_1D_SPECS["meson_energy"][1], dtype=float),
-        "pt": np.zeros(HIST_1D_SPECS["pt"][1], dtype=float),
-        "abs_eta": np.zeros(HIST_1D_SPECS["abs_eta"][1], dtype=float),
-        "abs_d0": np.zeros(HIST_1D_SPECS["abs_d0"][1], dtype=float),
-        "phi": np.zeros(HIST_1D_SPECS["phi"][1], dtype=float),
-        # Radial arrays include ROOT underflow and overflow slots.
-        "radial_angle": np.zeros(HIST_1D_SPECS["radial_angle"][1] + 2, dtype=float),
-        "dimuon_dr": np.zeros(HIST_1D_SPECS["dimuon_dr"][1], dtype=float),
-        "dimuon_mass_fine_before_cuts": np.zeros(HIST_1D_SPECS["dimuon_mass_fine"][1], dtype=float),
-        "dimuon_mass_fine_after_pTd0_cut": np.zeros(HIST_1D_SPECS["dimuon_mass_fine"][1], dtype=float),
-        "dimuon_mass_fine_after_all_cuts": np.zeros(HIST_1D_SPECS["dimuon_mass_fine"][1], dtype=float),
-    }
-
+    return {name: np.zeros(HIST_1D_SPECS[key][1] + 2, dtype=float)
+            for name, key, _ in HISTOGRAMS}
 
 def make_outputs():
     return {
@@ -486,14 +423,8 @@ def fill_1d(target, values, weight, spec_key):
     if len(values) == 0 or weight == 0.0:
         return
     _, nbins, xmin, xmax = HIST_1D_SPECS[spec_key]
-    if spec_key == "radial_angle":
-        # Match ROOT: xmin belongs to bin 1; xmax and above go to overflow.
-        indices = np.searchsorted(np.linspace(xmin, xmax, nbins + 1), values, side="right")
-        target += np.bincount(indices, weights=np.full(len(values), weight), minlength=nbins + 2)
-        return
-    counts, _ = np.histogram(values, bins=nbins, range=(xmin, xmax), weights=np.full(len(values), weight))
-    target += counts
-
+    indices = np.searchsorted(np.linspace(xmin, xmax, nbins + 1), values, side="right")
+    target += np.bincount(indices, weights=np.full(len(values), weight), minlength=nbins + 2)
 
 def merge_outputs(target, source):
     for mode_name in MODES:
@@ -537,8 +468,6 @@ def fill_meson_energy_before_decay(outputs, hist, weights, pname, e_weight_bin, 
 
     xaxis = hist.GetXaxis()
     for ix in range(1, hist.GetNbinsX() + 1):
-        if not energy_bin_allowed(xaxis, ix):
-            continue
         parent_energy = xaxis.GetBinCenterLog(ix)
         yield_z = z_limited_integral(hist, ix)
         if yield_z <= 0.0:
@@ -551,54 +480,37 @@ def fill_meson_energy_before_decay(outputs, hist, weights, pname, e_weight_bin, 
             if region is None:
                 continue
             weight = yield_z * w / G4POT * parent_factor * LUMI_SCALE
-            fill_1d(
-                outputs[mode_name][det][region]["h1"]["meson_energy_before_decay"],
-                np.asarray([parent_energy], dtype=float),
-                weight,
-                "meson_energy",
-            )
+            h1 = outputs[mode_name][det][region]["h1"]
+            fill_1d(h1["meson_energy_before_cut"], np.asarray([parent_energy]), weight, "meson_energy")
+            if energy_bin_allowed(xaxis, ix):
+                fill_1d(h1["meson_energy_after_cut"], np.asarray([parent_energy]), weight, "meson_energy")
 
 
-def fill_region_outputs(region_output, sample, decay_weight):
+def fill_region_outputs(region_output, sample, decay_weight, energy_pass=True):
     obs = sample["observables"]
-
-    pt_values = np.concatenate((obs["pt1"], obs["pt2"]))
-    eta_values = np.concatenate((obs["abs_eta1"], obs["abs_eta2"]))
-    d0_values = np.concatenate((obs["abs_d01"], obs["abs_d02"]))
-    phi_values = np.concatenate((obs["phi1"], obs["phi2"]))
-
     h1 = region_output["h1"]
     cutflow = region_output["cutflow"]
-    fill_1d(h1["pt"], pt_values, decay_weight, "pt")
-    fill_1d(h1["abs_eta"], eta_values, decay_weight, "abs_eta")
-    fill_1d(h1["abs_d0"], d0_values, decay_weight, "abs_d0")
-    fill_1d(h1["phi"], phi_values, decay_weight, "phi")
-    fill_1d(h1["dimuon_dr"], obs["dimuon_dr"], decay_weight, "dimuon_dr")
-    fill_1d(h1["radial_angle"], obs["dimuon_radial_angle"], decay_weight, "radial_angle")
-
-    fill_1d(
-        h1["dimuon_mass_fine_before_cuts"],
-        obs["dimuon_mass"],
-        decay_weight,
-        "dimuon_mass_fine",
-    )
     cutflow[0] += sample["n_valid"] * decay_weight
-    cutflow[1] += np.count_nonzero(sample["masks"]["pt"]) * decay_weight
-    cutflow[2] += np.count_nonzero(sample["masks"]["pt"] & sample["masks"]["eta"]) * decay_weight
-    cutflow[3] += np.count_nonzero(sample["masks"]["all"]) * decay_weight
-
-    all_cut_mask = sample["masks"]["all"]
-    mass_values = obs["dimuon_mass"][all_cut_mask]
-    fill_1d(h1["dimuon_mass_fine_after_pTd0_cut"], mass_values, decay_weight, "dimuon_mass_fine")
-    radial_cut_mask = all_cut_mask & sample["masks"]["radial"]
-    fill_1d(h1["dimuon_mass_fine_after_all_cuts"], obs["dimuon_mass"][radial_cut_mask], decay_weight, "dimuon_mass_fine")
-
+    if not energy_pass:
+        return
+    pt = sample["masks"]["pt"]
+    pt_dr = pt & (obs["dimuon_dr"] > DIMUON_DR_MIN)
+    final = pt_dr & sample["masks"]["eta"]
+    for i, mask in enumerate((np.ones(sample["n_valid"], dtype=bool), pt, pt_dr, final), start=1):
+        cutflow[i] += np.count_nonzero(mask) * decay_weight
+    fill_1d(h1["pt"], np.concatenate((obs["pt1"], obs["pt2"])), decay_weight, "pt")
+    fill_1d(h1["abs_eta"], np.concatenate((obs["abs_eta1"], obs["abs_eta2"])), decay_weight, "abs_eta")
+    fill_1d(h1["dimuon_dr"], obs["dimuon_dr"], decay_weight, "dimuon_dr")
+    fill_1d(h1["dimuon_dr_after_pT_cut"], obs["dimuon_dr"][pt], decay_weight, "dimuon_dr")
+    for name, mask in (("dimuon_mass_fine_before_cuts", slice(None)),
+                       ("dimuon_mass_fine_after_pT_cut", pt),
+                       ("dimuon_mass_fine_after_all_cuts", final)):
+        fill_1d(h1[name], obs["dimuon_mass"][mask], decay_weight, "dimuon_mass_fine")
 
 def process_root_file(input_path, weights, task_index=0, seed=DEFAULT_SEED):
     global RNG
     RNG = np.random.default_rng(seed + task_index)
     outputs = make_outputs()
-    cache = {}
 
     input_path = Path(input_path)
     pname, e_index = parse_input_file(input_path)
@@ -622,8 +534,6 @@ def process_root_file(input_path, weights, task_index=0, seed=DEFAULT_SEED):
             fill_meson_energy_before_decay(outputs, hist, weights, pname, e_weight_bin, mode_name, mode, det)
             weight_factor = mode_weight_factor(mode)
             for ix in range(1, hist.GetNbinsX() + 1):
-                if not energy_bin_allowed(hist.GetXaxis(), ix):
-                    continue
                 parent_energy = hist.GetXaxis().GetBinCenterLog(ix)
                 yield_z = z_limited_integral(hist, ix)
                 if yield_z <= 0.0:
@@ -636,24 +546,18 @@ def process_root_file(input_path, weights, task_index=0, seed=DEFAULT_SEED):
                     region = eta_region_from_theta(incident_angle_rad)
                     if region is None:
                         continue
-                    key = (mode_name, det, round(parent_energy, 12), round(a + 5.5, 6))
-                    if key not in cache:
-                        if mode["kind"] == "two_body":
-                            cache[key] = two_body_sample(
-                                mode, parent_energy, incident_angle_rad, radius
-                            )
-                        elif mode["kind"] == "three_body":
-                            cache[key] = three_body_sample(
-                                mode, parent_energy, incident_angle_rad, radius
-                            )
-                        else:
-                            raise ValueError(f"unknown decay kind {mode['kind']}")
-                    sample = cache[key]
+                    if mode["kind"] == "two_body":
+                        sample = two_body_sample(mode, parent_energy, incident_angle_rad, radius)
+                    elif mode["kind"] == "three_body":
+                        sample = three_body_sample(mode, parent_energy, incident_angle_rad, radius)
+                    else:
+                        raise ValueError(f"unknown decay kind {mode['kind']}")
                     if sample["n_valid"] == 0:
                         continue
-                    # Y yields are encoded in sampling probabilities; do not weight by Y again.
+                    # Integrate Y once; the mother follows the untilted incident direction.
                     decay_weight = yield_z * w / G4POT * weight_factor * LUMI_SCALE / N_DECAYS
-                    fill_region_outputs(outputs[mode_name][det][region], sample, decay_weight)
+                    fill_region_outputs(outputs[mode_name][det][region], sample, decay_weight,
+                                        energy_bin_allowed(hist.GetXaxis(), ix))
 
     rf.Close()
     return pname, e_index, e_weight_bin, "done", outputs
@@ -695,8 +599,7 @@ def calculate(weights, seed=DEFAULT_SEED):
 def make_root_hist(name, title, values, spec_key):
     axis_title, nbins, xmin, xmax = HIST_1D_SPECS[spec_key]
     hist = ROOT.TH1D(name, f"{title};{axis_title};events / 3 ab^{{-1}}", nbins, xmin, xmax)
-    flow_hist = spec_key == "radial_angle"
-    for i, value in enumerate(values, start=0 if flow_hist else 1):
+    for i, value in enumerate(values):
         hist.SetBinContent(i, float(value))
     return hist
 
@@ -711,45 +614,22 @@ def make_cutflow_hist(name, title, values):
 
 def write_metadata(root_file):
     root_file.cd()
-    metadata = ROOT.TNamed(
-        "metadata",
-        (
-            "no-tilt two-body and three-body dimuon histogram analysis; "
-            "parent_tilt=disabled; "
-            "mother_direction=untilted CalW radial direction from incident angle; "
-            "parent_yield=Z-selected total TH3 yield integrated over all Y bins; "
-            "production_point=unchanged detector radius; "
-            "radial_angle=atan2(|(p_mu1+p_mu2) cross radial|,(p_mu1+p_mu2) dot radial), radial=untilted CalW direction; "
-            "phi=unsigned xy angle between production radial direction and muon transverse momentum; "
-            "radial_histograms=300 bins in [0,0.3) rad, >=0.3 rad retained in overflow; "
-            "pt_abs_eta_abs_d0_phi_radial_angle=filled before muon cuts; "
-            "dimuon_mass_fine_after_pTd0_cut=legacy muon pT eta D0 cuts (eta retained); "
-            f"dimuon_mass_fine_after_all_cuts=muon pT eta D0 plus radial_angle<{RADIAL_ANGLE_MAX} rad; "
-            "cutflow=legacy selections without radial cut; "
-            f"modes={','.join(MODES)}; "
-            "three_body_model=legacy 260624_TH.py Dalitz q2 weights; "
-            "three_body_transition_form_factors=1; "
-            "three_body_muon_directions=isotropic in dimuon rest frame; "
-            "three_body_parent_masses=nominal fixed masses; "
-            f"eta_continuum_br={MODES['eta_continuum']['br']}; "
-            f"omega_continuum_br={MODES['omega_continuum']['br']}; "
-            f"energy_min_GeV={ENERGY_MIN}; "
-            f"z_max_cm={Z_MAX_CM}; "
-            f"muon_pt_min_GeV={MUON_PT_MIN}; "
-            f"muon_abs_eta_max={MUON_ABS_ETA_MAX}; "
-            f"d0_min_m={D0_MIN}; "
-            f"n_decays={N_DECAYS}; "
-            "normalization=3 ab^-1; "
-            "eta_region=untilted mother meson direction from CalW incident angle; "
-            "meson_energy_before_decay is split by CalW detector angle eta before toy decay; "
-            "pt_abs_eta_abs_d0_phi histograms fill both muons independently; "
-            "dimuon_dr is filled before pT eta D0 cuts; "
-            "cutflow stages=before_cuts,pt,pt_eta,pt_eta_d0; "
-            "z selection uses z-axis bin upper edge <= z_max_cm"
-        ),
-    )
-    metadata.Write()
-
+    ROOT.TNamed("metadata", (
+        "no-tilt dimuon analysis; parent_tilt=disabled; "
+        "parent_yield=Z-selected TH3 yield integrated over all Y bins; "
+        "eta_region=untilted CalW mother direction; normalization=3 ab^-1; "
+        "meson_energy=parent yield without branching ratio; "
+        "cutflow=dimuon yield including branching ratio and valid toy decay fraction; "
+        "pt_abs_eta=both muons independently after energy cut before muon cuts; "
+        "dimuon_dr_mass=one entry per pair after energy cut; "
+        "D0_and_radial_angle_cuts=disabled; all_histograms=ROOT underflow and overflow retained; "
+        "two_body_mass_model=Breit-Wigner above dimuon threshold, no upper mass cap; "
+        "three_body_model=legacy Dalitz q2 weights, form factors 1, isotropic pair-frame muons; "
+        f"modes={','.join(MODES)}; energy_bin_low_edge_min_GeV={ENERGY_MIN}; "
+        f"z_bin_upper_edge_max_cm={Z_MAX_CM}; muon_pt_strict_min_GeV={MUON_PT_MIN}; "
+        f"dimuon_dr_strict_min={DIMUON_DR_MIN}; muon_abs_eta_strict_max={MUON_ABS_ETA_MAX}; "
+        f"n_decays={N_DECAYS}; seed={DEFAULT_SEED}; cutflow_stages={','.join(CUTFLOW_STAGES)}"
+    )).Write()
 
 def write_outputs(outputs, root_path=None):
     if root_path is None:
@@ -770,18 +650,7 @@ def write_outputs(outputs, root_path=None):
                 region_output = outputs[mode_name][det][region]
                 title_prefix = f"{mode['label']} {det}, {region_label}"
 
-                for hist_name, spec_key, label in (
-                    ("meson_energy_before_decay", "meson_energy", "meson energy before decay"),
-                    ("pt", "pt", "muon pT"),
-                    ("abs_eta", "abs_eta", "muon |eta|"),
-                    ("abs_d0", "abs_d0", "muon |D0|"),
-                    ("phi", "phi", "muon #phi_{radial}^{xy} before cuts"),
-                    ("radial_angle", "radial_angle", "dimuon radial angle before muon cuts"),
-                    ("dimuon_dr", "dimuon_dr", "dimuon #DeltaR before pT eta D0 cuts"),
-                    ("dimuon_mass_fine_before_cuts", "dimuon_mass_fine", "dimuon mass before pT eta D0 cuts"),
-                    ("dimuon_mass_fine_after_pTd0_cut", "dimuon_mass_fine", "dimuon mass after pT D0 cuts, including muon eta cut"),
-                    ("dimuon_mass_fine_after_all_cuts", "dimuon_mass_fine", f"dimuon mass after pT eta D0 and radial < {RADIAL_ANGLE_MAX} rad cuts"),
-                ):
+                for hist_name, spec_key, label in HISTOGRAMS:
                     hist = make_root_hist(hist_name, f"{title_prefix} {label}", region_output["h1"][hist_name], spec_key)
                     hist.Write()
 
@@ -810,6 +679,8 @@ def parse_args():
 def main():
     global N_DECAYS, OUTPUT_DIR, DEFAULT_SEED, RNG
     args = parse_args()
+    if args.n_decays <= 0:
+        raise ValueError("--n-decays must be positive")
     N_DECAYS = args.n_decays
     OUTPUT_DIR = Path(args.output_dir)
     DEFAULT_SEED = args.seed
